@@ -4,5 +4,5 @@ This repository contains sample files for the system that finds all solutions in
 ### Sample Codes
 |     File Name       |     Description                               |
 | ------------------- | --------------------------------------------- |
-| find_all_solutions.py | This script finds all solutions in a search space using Grover's iterator |
+| find_all_solutions.py | This script demonstrates the method to find all solutions in a search space using Grover's iterator |
 | quantum_counting.py | This code demonstrates an implementation of Quantum Counting |

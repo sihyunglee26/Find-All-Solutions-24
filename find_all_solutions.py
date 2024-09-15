@@ -11,7 +11,7 @@ import math
 import random
 
 
-def findAllSolutions(numQubits, numTargets, debug=False):
+def findAllSolutions(numQubits, numTargets, debug=False, probMin=0.1):
     '''
     This function simulates Step 1 (estimation) and Step 2 (discovery) of our proposed methods
 
@@ -39,52 +39,60 @@ def findAllSolutions(numQubits, numTargets, debug=False):
     #
     # (Step 1) Estimate the number of targets
     #
-    Mestimated, answersSetFound, numShots = estimateM(numQubits, answersSortedList)
+    Mestimated, answersSetFound, numShots = estimateM(numQubits, answersSortedList)    
+    Mestimated = int(Mestimated + 0.5)    
     numMeasurements += numShots
     numTotalIterations += numShots
-    if debug: print(f"numTargetsPredicted = {Mestimated}, where numTargetsLeft = {len(answersSet)}")
-
+    numAnswersFoundInStep1 = len(answersSetFound)
+    if debug: print(f"numTargetsPredicted = {Mestimated}, where numTargetsLeft = {numTargets - len(answersSetFound)}")
+    
     #
     # (Step 2) Find all of the remaining targets
     #
-    if Mestimated > 0: # Otherwise, if Mestimated == 0, then all solutions are found
-        Mestimated = int(Mestimated + 0.5) - len(answersSetFound) # Use the closest integer as the estimate of M        
-        for answerFound in answersSetFound: # remove answers found while estimating M
-            answersSet.remove(answerFound)
-            answersSortedList.remove(answerFound)
+    if Mestimated > 0: # Otherwise, if Mestimated == 0, then no solutions to search for
+        # initialize fail_count
+        numMeasurementsWithNoSolutions = 0
         
-        numMeasurementsWithNoSolutions = 0        
-        while numMeasurementsWithNoSolutions < 10:
-            Mestimated = max(Mestimated, 1) # if Mestimated = 0, use 1 instead
+        # initialize max_fail_count
+        probResample = len(answersSetFound) / Mestimated
+        if probResample == 0: numMeasurementsWithNoSolutionsMax = 10    # no solution was found yet        
+        else:
+            if probResample == 1: probResample = Mestimated / (Mestimated+1) # all solutions are found or Mestimated < M and len(answerSetFound) == Mestimated
+            numMeasurementsWithNoSolutionsMax = math.ceil(math.log(probMin) / math.log(probResample))        
+        if debug: print(f"max # of measurements with no solutions = {numMeasurementsWithNoSolutionsMax}")
 
-            # If the oracle has changed, create a new quantum circuit (qc). Otherwise, use the same qc and save time
-            if numMeasurementsWithNoSolutions == 0:
-                qc = QuantumCircuit(numDataQubits + numAncillaQubits, numDataQubits) # numbers of qubits and classical bits            
-                for qubit in range(numDataQubits): qc.h(qubit)  # initialization: set all data qubits into an even superposition, while ancilla qubits remain in state 0
-                dataQubitIndices = [i for i in range(numDataQubits)]
-                ancillaQubitIndices = [numDataQubits + i for i in range(numAncillaQubits)]
-                numIterations = math.floor(math.sqrt(searchSpaceSize / Mestimated) * math.pi / 4)
-                addControlledGroverIterator(qc, None, dataQubitIndices, ancillaQubitIndices, answersSortedList, numIterations)
-                qc.measure(dataQubitIndices, range(numDataQubits))
+        # initialize the quantum circuit
+        qc = QuantumCircuit(numDataQubits + numAncillaQubits, numDataQubits) # numbers of qubits and classical bits            
+        for qubit in range(numDataQubits): qc.h(qubit)  # initialization: set all data qubits into an even superposition, while ancilla qubits remain in state 0
+        dataQubitIndices = [i for i in range(numDataQubits)]
+        ancillaQubitIndices = [numDataQubits + i for i in range(numAncillaQubits)]
+        numIterations = math.floor(math.sqrt(searchSpaceSize / Mestimated) * math.pi / 4)
+        addControlledGroverIterator(qc, None, dataQubitIndices, ancillaQubitIndices, answersSortedList, numIterations)
+        qc.measure(dataQubitIndices, range(numDataQubits))
 
-            # Run the quantum circuit and store the results in measuredValue
+        while numMeasurementsWithNoSolutions < numMeasurementsWithNoSolutionsMax:
             result = execute(qc, Aer.get_backend('qasm_simulator'), shots=1).result().get_counts(qc)
             numMeasurements += 1
             numTotalIterations += numIterations
             measuredValue = int(list(result.keys())[0], 2)
             if debug: print(f"measured value: {result} {measuredValue}")
-            
-            if measuredValue in answersSet: # If the measured value belongs to the solutions                
-                if debug: print(f"a solution found and thus remove from answers")
-                answersSet.remove(measuredValue)
-                answersSortedList.remove(measuredValue)
-                Mestimated -= 1
+            if measuredValue in answersSet and measuredValue not in answersSetFound:
+                if debug: print(f"a new solution {measuredValue} was found")
+                answersSetFound.add(measuredValue)                
                 numMeasurementsWithNoSolutions = 0
-            else: # If the measured value does not belong to the solutions
-                numMeasurementsWithNoSolutions += 1                
 
-    print(f"Algorithm terminated with {numTargets - len(answersSet)}/{numTargets} solutions found")
-    print(f"    performed {numMeasurements} measurements and {numTotalIterations} Grover iterations")
+                # adjust max_fail_count
+                probResample = len(answersSetFound) / Mestimated
+                if probResample == 0: numMeasurementsWithNoSolutionsMax = 10    # no solution was found yet        
+                else:
+                    if probResample == 1: probResample = Mestimated / (Mestimated+1) # all solutions are found or Mestimated < M and len(answerSetFound) == Mestimated
+                    numMeasurementsWithNoSolutionsMax = math.ceil(math.log(probMin) / math.log(probResample))
+                if debug: print(f"max # of measurements with no solutions = {numMeasurementsWithNoSolutionsMax}")
+            else:
+                numMeasurementsWithNoSolutions += 1                            
+
+    print(f"Algorithm terminated with {len(answersSetFound)}/{numTargets} solutions found")
+    print(f"    performed {numMeasurements}(={numShots}+{numMeasurements-numShots}) measurements, {numTotalIterations}(={numShots}+{numTotalIterations-numShots}) Grover iterations")
     print()
 
 
@@ -92,7 +100,7 @@ def generateAnswers(searchSpaceSize, numTargets):
     '''
     This function is used within findAllSolutions()
         to randomly generate numTargets solutions within a search space of size searchSpaceSize
-    '''    
+    '''
     answersSet = set() 
     for _ in range(numTargets):
         r = random.randint(0, searchSpaceSize - 1)
@@ -133,8 +141,8 @@ def addControlledGroverIterator(qc, controlQubitIndex, dataQubitIndices, ancilla
         
             qc.ccx(dataQubitIndices[0], dataQubitIndices[1], ancillaQubitIndices[0])
             for i in range(2, numDataQubits):
-                qc.ccx(dataQubitIndices[i], ancillaQubitIndices[i-2], ancillaQubitIndices[i-1])            
-            
+                qc.ccx(dataQubitIndices[i], ancillaQubitIndices[i-2], ancillaQubitIndices[i-1])
+                        
             if controlQubitIndex == None: qc.cz(ancillaQubitIndices[-1], dataQubitIndices[-1])
             else: qc.ccz(controlQubitIndex, ancillaQubitIndices[-1], dataQubitIndices[-1])  # controlled sign-invert            
 
@@ -153,7 +161,7 @@ def addControlledGroverIterator(qc, controlQubitIndex, dataQubitIndices, ancilla
 
         qc.ccx(dataQubitIndices[0], dataQubitIndices[1], ancillaQubitIndices[0])
         for i in range(2, numDataQubits):
-            qc.ccx(dataQubitIndices[i], ancillaQubitIndices[i-2], ancillaQubitIndices[i-1])               
+            qc.ccx(dataQubitIndices[i], ancillaQubitIndices[i-2], ancillaQubitIndices[i-1])        
 
         if controlQubitIndex == None: qc.cz(ancillaQubitIndices[-1], dataQubitIndices[-1])
         else: qc.ccz(controlQubitIndex, ancillaQubitIndices[-1], dataQubitIndices[-1])  # controlled sign-invert
@@ -223,13 +231,9 @@ def estimateM(numQubits, answers, debug=False):
     return Mestimated, answersSetFound, numShots
 
 
-if __name__ == "__main__":
-    #
-    # Run findAllSolutions() for various N and M
-    #
+if __name__ == "__main__":    
     for n in range(3, 9+1):
         N = 2**n
-        for M in range(0, math.floor(math.sqrt(N))+1):        
+        for M in range(1, math.floor(math.sqrt(N))+1):
             print(f"N={N}, M={M}")
-            findAllSolutions(n, M, False)
-    
+            findAllSolutions(n, M, debug=False)
